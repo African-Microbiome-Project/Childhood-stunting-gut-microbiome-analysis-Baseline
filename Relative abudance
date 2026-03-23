@@ -1,0 +1,250 @@
+# Relative abudance: Phyla 
+# Load libraries
+library(microeco)
+library(ggplot2)
+library(dplyr)
+
+# 1. Load microeco object
+
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+mt <- readRDS(file.path(base_dir, "microeco_rarefied_Informal_mt.rds"))
+
+
+# 2. Ensure output directory exists
+
+out_dir <- file.path(base_dir, "Informal microecco")
+dir.create(out_dir, showWarnings = FALSE)
+
+
+# 3. Factor Stunting_status and remove NAs
+
+mt$sample_table <- mt$sample_table[!is.na(mt$sample_table$Stunting_status), ]
+mt$sample_table$Stunting_status <- factor(
+  mt$sample_table$Stunting_status,
+  levels = c("Non-stunted", "Stunted")
+)
+
+
+# 4. Create trans_abund object (top 10 phyla)
+
+t_phylum <- trans_abund$new(
+  dataset = mt,
+  taxrank = "Phylum",
+  ntaxa = 10,
+  groupmean = NULL
+)
+
+
+# 5. Recode phylum names to updated taxonomy
+
+recode_map <- c(
+  "Firmicutes"         = "Bacillota",
+  "Bacteroidetes"      = "Bacteroidota",
+  "Actinobacteria"     = "Actinomycetota",
+  "Actinobacteriota"   = "Actinomycetota",   # <<< FIX
+  "Proteobacteria"     = "Pseudomonadota",
+  "Lentisphaerae"      = "Lentisphaerota",
+  "Elusimicrobia"      = "Elusimicrobiota",
+  "Fusobacteria"       = "Fusobacteriota",
+  "Synergistetes"      = "Synergistota",
+  "Tenericutes"        = "Mycoplasmatota",
+  "Verrucomicrobia"    = "Verrucomicrobiota",
+  "Euryarchaeota"      = "Methanobacteriota"
+)
+
+t_phylum$data_taxanames <- recode(t_phylum$data_taxanames, !!!recode_map)
+t_phylum$data_abund$Taxonomy <- recode(t_phylum$data_abund$Taxonomy, !!!recode_map)
+
+
+# 5b. Add Stunting_status for faceting
+
+t_phylum$data_abund$Stunting_status <- mt$sample_table$Stunting_status[
+  match(t_phylum$data_abund$Sample, rownames(mt$sample_table))
+]
+
+
+# 6. Define colors for top 10 phyla + Others
+
+taxa_colors_phylum <- c(
+  "#FC5A8D",
+  "#20B2AA",
+  "#FF8C00",
+  "#800080",
+  "#3CB371",
+  "#00008B",
+  "#D291BC",
+  "#556B2F",
+  "#1E90FF",
+  "#8B4513",
+  "grey70"
+)
+
+
+# 7. Generate vertical bar plot
+
+g_phylum <- t_phylum$plot_bar(
+  bar_full = TRUE,
+  others_color = "grey70",
+  facet = "Stunting_status",
+  xtext_keep = FALSE,
+  legend_text_italic = FALSE,
+  barwidth = 1,                 
+  color_values = taxa_colors_phylum
+) +
+  theme_classic() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.title = element_text(face = "bold", size = 14, color = "black"),
+    legend.text = element_text(size = 12, color = "black")
+  ) +
+  labs(
+    y = "Relative Abundance (%)",
+    legend.title = "Phylum"
+  )
+
+# 8. Display plot
+
+print(g_phylum)
+
+
+# 9. Save plot
+
+pdf(file.path(out_dir, "informal_relative_abundance_phylum_nospace.pdf"),
+    width = 12, height = 6)
+print(g_phylum)
+dev.off()
+
+png(file.path(out_dir, "informal_relative_abundance_phylum_nospace.png"),
+    width = 12*600, height = 6*600, res = 600)
+print(g_phylum)
+dev.off()
+
+cat("Phylum bar plot (no spaces) saved in:", out_dir, "\n")
+
+
+#calculate the % of taxa present in each group 
+
+library(dplyr)
+library(openxlsx)  
+
+# 1. Calculate mean relative abundance per Stunting_status
+phylum_percent_table <- phylum_abund %>%
+  group_by(Stunting_status, Phylum = Taxonomy) %>%
+  summarise(
+    Mean_RelAbund = mean(Abundance, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Stunting_status, desc(Mean_RelAbund))
+
+# 2. Print to console
+print(phylum_percent_table, n = Inf)
+
+# 3. Save as Excel
+out_file <- file.path(base_dir, "Phylum_Mean_RelAbund.xlsx")
+write.xlsx(phylum_percent_table, out_file)
+
+# ================================================================
+# Genus Level
+# 0. Load libraries
+
+library(microeco)
+library(ggplot2)
+library(dplyr)
+
+# 1. Load microeco object
+
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+mt <- readRDS(file.path(base_dir, "microeco_rarefied_Informal_mt.rds"))
+
+# 2. Ensure output directory exists
+
+out_dir <- file.path(base_dir, "Informal microecco")
+dir.create(out_dir, showWarnings = FALSE)
+
+# 3. Remove NA genera directly from taxonomy table
+
+mt$tax_table <- mt$tax_table[!is.na(mt$tax_table[, "Genus"]), ]
+keep_otus <- rownames(mt$tax_table)
+mt$otu_table <- mt$otu_table[keep_otus, , drop = FALSE]
+
+# 4. Factor Stunting_status and remove NAs
+
+mt$sample_table <- mt$sample_table[!is.na(mt$sample_table$Stunting_status), ]
+mt$sample_table$Stunting_status <- factor(
+  mt$sample_table$Stunting_status,
+  levels = c("Non-stunted", "Stunted")
+)
+
+# 5. Create trans_abund object (top 15 genera, individual samples)
+
+t_genus <- trans_abund$new(
+  dataset = mt,
+  taxrank = "Genus",
+  ntaxa = 15,
+  groupmean = NULL  
+)
+
+# Re-add Stunting_status for faceting
+t_genus$data_abund$Stunting_status <- mt$sample_table$Stunting_status[
+  match(t_genus$data_abund$Sample, rownames(mt$sample_table))
+]
+
+
+# 6. Define colors for top 15 genera + Others
+
+taxa_colors_genus <- c(
+  "#FC5A8D", "#20B2AA", "#FF8C00", "#800080", "#3CB371",
+  "#00008B", "#D291BC", "#556B2F", "#1E90FF", "#8B4513",
+  "#FF0000", "#00FF00", "#FF1493", "#FFA07A", "#008080",
+  "grey70"  # Others
+)
+
+
+# 7. Generate vertical bar plot for all samples, faceted by Stunting_status
+
+g_genus <- t_genus$plot_bar(
+  bar_full = TRUE,
+  others_color = "grey70",
+  facet = "Stunting_status",
+  xtext_keep = FALSE,
+  legend_text_italic = FALSE,
+  barwidth = 1,             
+  color_values = taxa_colors_genus
+) +
+  theme_classic() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.title = element_text(face = "bold", size = 14, color = "black"),
+    legend.text = element_text(size = 12, color = "black")
+  ) +
+  labs(
+    y = "Relative Abundance (%)",
+    legend.title = "Genus"
+  )
+
+# 8. Display plot in console
+
+print(g_genus)
+
+# 9. Save plot as PDF and PNG
+
+pdf(file.path(out_dir, "informal_relative_abundance_top15_genus_nospace.pdf"),
+    width = 12, height = 6)
+print(g_genus)
+dev.off()
+
+png(file.path(out_dir, "informal_relative_abundance_top15_genus_nospace.png"),
+    width = 12*600, height = 6*600, res = 600)
+print(g_genus)
+dev.off()
+
+cat("Top 15 genus-level bar plot (no spaces) saved in:", out_dir, "\n")
+
