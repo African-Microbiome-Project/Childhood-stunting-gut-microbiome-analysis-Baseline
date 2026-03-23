@@ -1,0 +1,429 @@
+# Beta Diversity - Feeding Type × Stunting Status (Bray-Curtis)
+# ================================================================
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+
+# 1. Load phyloseq object
+
+ps <- readRDS("C:/Users/kayle/Combined_Sep_data/Kaylee results/Merged_rarefied_Informal.rds")
+
+# 2. Filter samples and metadata prep
+
+ps <- prune_samples(!is.na(sample_data(ps)$Feeding_type) & 
+                      !is.na(sample_data(ps)$Stunting_status), ps)
+
+meta_df <- data.frame(sample_data(ps))
+meta_df$SampleID <- rownames(meta_df)
+
+# Fix naming
+meta_df$Feeding_type <- gsub("Breastfed_and_Bottlefed", "Breastfed and Bottlefed", meta_df$Feeding_type)
+
+# Factor levels
+meta_df$Feeding_type <- factor(meta_df$Feeding_type,
+                               levels = c("Breastfed", "Bottlefed", "Unknown", "Breastfed and Bottlefed"))
+meta_df$Stunting_status <- factor(meta_df$Stunting_status, levels = c("Stunted", "Non-stunted"))
+
+# Combined grouping
+meta_df$Group <- paste(meta_df$Feeding_type, meta_df$Stunting_status)
+sample_data(ps)$Group <- meta_df$Group
+
+cat("Sample counts per Feeding_type × Stunting_status group:\n")
+print(table(meta_df$Group))
+
+# 3. Colors and shapes
+
+feeding_colors <- c(
+  "Breastfed" = "#E69F00",
+  "Bottlefed" = "#CC79A7",
+  "Unknown" = "#0072B2",
+  "Breastfed and Bottlefed" = "#009E73"
+)
+
+stunting_shapes <- c(
+  "Stunted" = 24,
+  "Non-stunted" = 21
+)
+
+# 4. Bray-Curtis distance & PCoA
+
+bray_dist <- phyloseq::distance(ps, method = "bray")
+pcoa_res <- cmdscale(bray_dist, eig = TRUE, k = 2)
+
+pcoa_df <- data.frame(pcoa_res$points)
+colnames(pcoa_df) <- c("Axis.1", "Axis.2")
+pcoa_df$SampleID <- rownames(pcoa_df)
+pcoa_df <- merge(pcoa_df, meta_df, by = "SampleID")
+
+# Variance explained
+var_explained <- round(100 * pcoa_res$eig / sum(pcoa_res$eig), 1)
+
+# 5. PERMANOVA (adonis2)
+
+set.seed(123)
+permanova_res <- adonis2(bray_dist ~ Feeding_type * Stunting_status, data = meta_df)
+print(permanova_res)
+permanova_p <- permanova_res$`Pr(>F)`[1]
+permanova_label <- paste0("PERMANOVA p = ", signif(permanova_p, 3))
+
+# 6. ANOSIM
+
+anosim_res <- anosim(bray_dist, grouping = meta_df$Group)
+print(anosim_res)
+anosim_r <- signif(anosim_res$statistic, 2)
+anosim_p <- signif(anosim_res$signif, 3)
+anosim_label <- paste0("ANOSIM R = ", anosim_r, ", p = ", anosim_p)
+
+# Combine labels
+combined_label <- permanova_label
+
+# 7. Plot PCoA with labels
+
+plot_pcoa <- function(df, var_expl, combined_label) {
+  ggplot(df, aes(x = Axis.1, y = Axis.2,
+                 fill = Feeding_type,
+                 shape = Stunting_status)) +
+    geom_hline(yintercept = 0, color = "grey40", linetype = "dashed") +
+    geom_vline(xintercept = 0, color = "grey40", linetype = "dashed") +
+    geom_point(size = 3.5, stroke = 1, alpha = 0.9, color = "black") +
+    scale_fill_manual(values = feeding_colors, name = "Feeding Type") +
+    scale_shape_manual(values = stunting_shapes, name = "Stunting Status") +
+    labs(
+      x = paste0("PCo1 (", var_expl[1], "%)"),
+      y = paste0("PCo2 (", var_expl[2], "%)")
+    ) +
+    annotate("text",
+             x = max(df$Axis.1, na.rm = TRUE) * 0.9,
+             y = max(df$Axis.2, na.rm = TRUE) * 0.95,
+             label = combined_label,
+             hjust = 1, vjust = 1,
+             size = 5, fontface = "bold") +
+    theme_classic() +
+    guides(
+      fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+      shape = guide_legend(override.aes = list(fill = "grey"))
+    ) +
+    theme(
+      axis.title = element_text(face = "bold", size = 14),
+      axis.text = element_text(face = "bold", size = 12),
+      legend.title = element_text(face = "bold", size = 13),
+      legend.text = element_text(face = "bold", size = 11),
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5)
+    )
+}
+
+pcoa_plot <- plot_pcoa(pcoa_df, var_explained, combined_label)
+
+# 8. Print plot in console
+
+cat("\nDisplaying PCoA plot in console...\n")
+print(pcoa_plot)
+
+# 9. Save PCoA plot
+
+outdir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results/Results_informal"
+if(!dir.exists(outdir)) dir.create(outdir)
+
+pdf(file.path(outdir, "PCoA_Feeding_Stunting_Bray_PERMANOVA_ANOSIM.pdf"), width = 8, height = 5)
+print(pcoa_plot)
+dev.off()
+
+png(file.path(outdir, "PCoA_Feeding_Stunting_Bray_PERMANOVA_ANOSIM.png"), width = 8*600, height = 5*600, res = 600)
+print(pcoa_plot)
+dev.off()
+
+# 10. Pairwise PERMANOVA
+
+groups <- unique(meta_df$Group)
+pairwise_res <- list()
+
+for (i in 1:(length(groups) - 1)) {
+  for (j in (i + 1):length(groups)) {
+    sub_samples <- meta_df$Group %in% c(groups[i], groups[j])
+    sub_dist <- as.matrix(bray_dist)[sub_samples, sub_samples]
+    sub_meta <- meta_df[sub_samples, ]
+    set.seed(123)
+    res <- adonis2(sub_dist ~ Group, data = sub_meta)
+    pairwise_res[[paste(groups[i], "vs", groups[j])]] <- data.frame(
+      Comparison = paste(groups[i], "vs", groups[j]),
+      R2 = res$R2[1],
+      F = res$F[1],
+      p = res$`Pr(>F)`[1]
+    )
+  }
+}
+
+pairwise_res_df <- do.call(rbind, pairwise_res)
+pairwise_res_df$p.adjusted <- p.adjust(pairwise_res_df$p, method = "BH")
+
+pairwise_res_df <- pairwise_res_df %>%
+  mutate(Significance = case_when(
+    p.adjusted < 0.001 ~ "***",
+    p.adjusted < 0.01  ~ "**",
+    p.adjusted < 0.05  ~ "*",
+    TRUE ~ "ns"
+  ))
+
+cat("\nPairwise PERMANOVA results (BH-adjusted):\n")
+print(pairwise_res_df[, c("Comparison", "R2", "F", "p", "p.adjusted", "Significance")])
+
+signif_pairwise <- pairwise_res_df %>%
+  filter(p.adjusted < 0.05) %>%
+  arrange(p.adjusted)
+
+cat("\nSignificant pairwise PERMANOVA comparisons:\n")
+if (nrow(signif_pairwise) > 0) {
+  print(signif_pairwise[, c("Comparison", "R2", "F", "p.adjusted", "Significance")])
+} else {
+  cat("No significant pairwise comparisons found (all ns)\n")
+}
+
+write.csv(pairwise_res_df, file.path(outdir, "Pairwise_PERMANOVA_Feeding_Stunting_All.csv"), row.names = FALSE)
+write.csv(signif_pairwise, file.path(outdir, "Pairwise_PERMANOVA_Feeding_Stunting_Significant.csv"), row.names = FALSE)
+
+cat("\nPairwise PERMANOVA results saved to:\n", outdir, "\n")
+
+
+# 11. Create plot of significant pairwise tests
+
+pairwise_plot <- ggplot(signif_pairwise,
+                        aes(x = R2, y = reorder(Comparison, R2))) +
+  geom_point(aes(size = -log10(p.adjusted),
+                 color = Significance),
+             alpha = 0.9) +
+  scale_color_manual(values = c("ns" = "grey60",
+                                "*" = "#FFB347",
+                                "**" = "#E74C3C",
+                                "***" = "#C70039")) +
+  scale_size_continuous(range = c(3, 6)) +
+  theme_bw(base_size = 12) +
+  labs(title = "Significant Pairwise PERMANOVA (Feeding × Stunting)",
+       x = expression(R^2~"(Effect size)"),
+       y = "Comparison",
+       size = "-log10(p.adj)",
+       color = "Significance") +
+  theme(
+    axis.text.y = element_text(size = 9, face = "bold"),
+    axis.text.x = element_text(size = 10, face = "bold"),
+    axis.title = element_text(face = "bold", size = 12),
+    legend.title = element_text(face = "bold", size = 11),
+    legend.text = element_text(size = 10),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    plot.margin = margin(10, 15, 10, 5)
+  )
+
+# 12. View plot in console
+
+view_plot <- TRUE
+if(view_plot) print(pairwise_plot)
+
+# 13. Save plot
+
+pdf(file.path(outdir, "Pairwise_PERMANOVA_Feeding_Stunting_SignificancePlot.pdf"),
+    width = 8, height = 5)
+print(pairwise_plot)
+dev.off()
+
+png(file.path(outdir, "Pairwise_PERMANOVA_Feeding_Stunting_SignificancePlot.png"),
+    width = 8*600, height = 5*600, res = 600)
+print(pairwise_plot)
+dev.off()
+
+# ================================================================
+
+# Beta Diversity - Gestation Term × Stunting Status (Bray-Curtis)
+
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+
+# 1. Load phyloseq object
+
+ps <- readRDS("C:/Users/kayle/Combined_Sep_data/Kaylee results/Merged_rarefied_Informal.rds")
+
+
+# 2. Filter samples and prepare metadata
+
+ps <- prune_samples(!is.na(sample_data(ps)$Gestation_term) & 
+                      !is.na(sample_data(ps)$Stunting_status), ps)
+
+meta_df <- data.frame(sample_data(ps))
+meta_df$SampleID <- rownames(meta_df)
+
+# Fix naming for Gestation_term
+meta_df$Gestation_term <- gsub("Full_term", "Full term", meta_df$Gestation_term)
+
+# Factor levels
+meta_df$Gestation_term <- factor(meta_df$Gestation_term,
+                                 levels = c("Full term", "Premature", "Unknown"))
+meta_df$Stunting_status <- factor(meta_df$Stunting_status,
+                                  levels = c("Stunted", "Non-stunted"))
+
+# Combined grouping for pairwise analysis
+meta_df$Group <- paste(meta_df$Gestation_term, meta_df$Stunting_status)
+sample_data(ps)$Group <- meta_df$Group
+
+cat("Sample counts per Gestation_term × Stunting_status group:\n")
+print(table(meta_df$Group))
+
+# 3. Colors and shapes
+
+gestation_colors <- c(
+  "Full term" = "#009E73",  # Green
+  "Premature" = "#8A2BE2",  # Bright purple
+  "Unknown" = "#E377C2"     # Brighter magenta
+)
+
+stunting_shapes <- c(
+  "Stunted" = 24,       # Triangle
+  "Non-stunted" = 21    # Circle
+)
+
+# 4. Bray–Curtis distance & PCoA
+
+bray_dist <- phyloseq::distance(ps, method = "bray")
+pcoa_res <- cmdscale(bray_dist, eig = TRUE, k = 2)
+
+pcoa_df <- data.frame(pcoa_res$points)
+colnames(pcoa_df) <- c("Axis.1", "Axis.2")
+pcoa_df$SampleID <- rownames(pcoa_df)
+pcoa_df <- merge(pcoa_df, meta_df, by = "SampleID")
+
+# Variance explained
+var_explained <- round(100 * pcoa_res$eig / sum(pcoa_res$eig), 1)
+
+# 5. PERMANOVA (adonis2)
+
+set.seed(123)
+permanova_res <- adonis2(bray_dist ~ Gestation_term * Stunting_status, data = meta_df)
+print(permanova_res)
+permanova_p <- permanova_res$`Pr(>F)`[1]
+permanova_label <- paste0("PERMANOVA p = ", signif(permanova_p, 3))
+
+# 6. ANOSIM
+
+anosim_res <- anosim(bray_dist, grouping = meta_df$Group)
+print(anosim_res)
+anosim_r <- signif(anosim_res$statistic, 2)
+anosim_p <- signif(anosim_res$signif, 3)
+anosim_label <- paste0("ANOSIM R = ", anosim_r, ", p = ", anosim_p)
+
+# Combined label (you can include both if you prefer)
+combined_label <- permanova_label
+
+# 7. Plot PCoA
+
+plot_pcoa <- function(df, var_expl, combined_label) {
+  ggplot(df, aes(x = Axis.1, y = Axis.2,
+                 fill = Gestation_term,
+                 shape = Stunting_status)) +
+    geom_hline(yintercept = 0, color = "grey40", linetype = "dashed") +
+    geom_vline(xintercept = 0, color = "grey40", linetype = "dashed") +
+    geom_point(size = 3.5, stroke = 1, alpha = 0.9, color = "black") +
+    scale_fill_manual(values = gestation_colors, name = "Gestation Term") +
+    scale_shape_manual(values = stunting_shapes, name = "Stunting Status") +
+    labs(
+      x = paste0("PCo1 (", var_expl[1], "%)"),
+      y = paste0("PCo2 (", var_expl[2], "%)")
+    ) +
+    annotate("text",
+             x = max(df$Axis.1, na.rm = TRUE) * 0.9,
+             y = max(df$Axis.2, na.rm = TRUE) * 0.95,
+             label = combined_label,
+             hjust = 1, vjust = 1,
+             size = 5, fontface = "bold") +
+    theme_classic() +
+    guides(
+      fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+      shape = guide_legend(override.aes = list(fill = "grey"))
+    ) +
+    theme(
+      axis.title = element_text(face = "bold", size = 14),
+      axis.text = element_text(face = "bold", size = 12),
+      legend.title = element_text(face = "bold", size = 13),
+      legend.text = element_text(face = "bold", size = 11),
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5)
+    )
+}
+
+pcoa_plot <- plot_pcoa(pcoa_df, var_explained, combined_label)
+
+# 8. Print plot in console
+
+cat("\nDisplaying PCoA plot in console...\n")
+print(pcoa_plot)
+
+# 9. Save PCoA plot
+
+outdir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results/Results_informal"
+if(!dir.exists(outdir)) dir.create(outdir)
+
+pdf(file.path(outdir, "PCoA_Gestation_Stunting_Bray_PERMANOVA_ANOSIM.pdf"), width = 8, height = 5)
+print(pcoa_plot)
+dev.off()
+
+png(file.path(outdir, "PCoA_Gestation_Stunting_Bray_PERMANOVA_ANOSIM.png"), width = 8*600, height = 5*600, res = 600)
+print(pcoa_plot)
+dev.off()
+
+# 10. Pairwise PERMANOVA
+
+groups <- unique(meta_df$Group)
+pairwise_res <- list()
+
+for (i in 1:(length(groups) - 1)) {
+  for (j in (i + 1):length(groups)) {
+    sub_samples <- meta_df$Group %in% c(groups[i], groups[j])
+    sub_dist <- as.matrix(bray_dist)[sub_samples, sub_samples]
+    sub_meta <- meta_df[sub_samples, ]
+    set.seed(123)
+    res <- adonis2(sub_dist ~ Group, data = sub_meta)
+    pairwise_res[[paste(groups[i], "vs", groups[j])]] <- data.frame(
+      Comparison = paste(groups[i], "vs", groups[j]),
+      R2 = res$R2[1],
+      F = res$F[1],
+      p = res$`Pr(>F)`[1]
+    )
+  }
+}
+
+pairwise_res_df <- do.call(rbind, pairwise_res)
+pairwise_res_df$p.adjusted <- p.adjust(pairwise_res_df$p, method = "BH")
+
+pairwise_res_df <- pairwise_res_df %>%
+  mutate(Significance = case_when(
+    p.adjusted < 0.001 ~ "***",
+    p.adjusted < 0.01  ~ "**",
+    p.adjusted < 0.05  ~ "*",
+    TRUE ~ "ns"
+  ))
+
+cat("\nPairwise PERMANOVA results (BH-adjusted):\n")
+print(pairwise_res_df[, c("Comparison", "R2", "F", "p", "p.adjusted", "Significance")])
+
+signif_pairwise <- pairwise_res_df %>%
+  filter(p.adjusted < 0.05) %>%
+  arrange(p.adjusted)
+
+cat("\nSignificant pairwise PERMANOVA comparisons:\n")
+if (nrow(signif_pairwise) > 0) {
+  print(signif_pairwise[, c("Comparison", "R2", "F", "p.adjusted", "Significance")])
+} else {
+  cat("No significant pairwise comparisons found (all ns)\n")
+}
+
+write.csv(pairwise_res_df, file.path(outdir, "Pairwise_PERMANOVA_Gestation_Stunting_All.csv"), row.names = FALSE)
+write.csv(signif_pairwise, file.path(outdir, "Pairwise_PERMANOVA_Gestation_Stunting_Significant.csv"), row.names = FALSE)
+
+cat("\nPairwise PERMANOVA results saved to:\n", outdir, "\n")
+
+
+
+cat("\nPairwise PERMANOVA significance plot saved to:", outdir, "\n")
