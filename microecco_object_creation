@@ -1,0 +1,44 @@
+# 0. Load libraries
+
+library(phyloseq)
+library(microeco)
+
+# 1. Define base directory and load rarefied phyloseq object
+
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+ps_informal_rarefied <- readRDS(file.path(base_dir, "Merged_rarefied_Informal.rds"))
+
+# 2. Load metadata and ensure proper alignment
+
+metadata_informal <- read.csv(file.path(base_dir, "Combined_Metadata_Informal.csv"),
+                              stringsAsFactors = FALSE, row.names = 1)
+
+# Optional: Make sure metadata order matches phyloseq sample order
+metadata_informal <- metadata_informal[sample_names(ps_informal_rarefied), ]
+
+# 3. Extract components from phyloseq
+
+otu_tab <- as.data.frame(t(otu_table(ps_informal_rarefied)))   # taxa as columns, samples as rows
+tax_tab <- as.data.frame(as.matrix(tax_table(ps_informal_rarefied)))
+sam_tab <- metadata_informal
+
+# 4. Create microeco object
+
+mt <- microtable$new(sample_table = sam_tab,
+                     otu_table = otu_tab,
+                     tax_table = tax_tab)
+
+# 5. Tidy dataset
+
+mt$tidy_dataset()
+
+# Check that it worked
+mt
+
+# 6. Save the microeco object
+
+saveRDS(mt, file.path(base_dir, "microeco_rarefied_Informal_mt.rds"))
+cat("microeco object saved to microeco_rarefied_Informal_mt.rds\n")
+
+library(microeco)
+mt <- readRDS("C:/Users/kayle/Combined_Sep_data/Kaylee results/microeco_rarefied_Informal_mt.rds")
