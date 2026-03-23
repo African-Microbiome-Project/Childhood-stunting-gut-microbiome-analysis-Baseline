@@ -1,0 +1,256 @@
+# Load the necessary libraries
+library(phyloseq)
+library(dplyr)
+library(tidyr)
+
+# Assuming your phyloseq object is named 'ps'
+# 1. Define base directory and load rarefied phyloseq object
+
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+ps <- readRDS(file.path(base_dir, "Merged_rarefied_Informal.rds"))
+
+# Save the abundance table to a CSV file
+
+abundance_table <- as.data.frame(otu_table(ps))
+write.csv(abundance_table, "abundance_table.csv")
+
+# Save the taxonomy table to a CSV file
+
+taxonomy_table <- as.data.frame(tax_table(ps))
+write.csv(taxonomy_table, "taxonomy_table.csv")
+
+
+# Transpose the abundance table
+
+abundance_table_t <- t(abundance_table)
+
+# Merge the abundance and taxonomy tables
+
+taxonomy_abundance <- merge(abundance_table_t, taxonomy_table, by = "row.names")
+rownames(taxonomy_abundance) <- taxonomy_abundance$Row.names
+taxonomy_abundance <- taxonomy_abundance[, -1]
+
+#CHECK IF NOT REPEATED FOR GENUS.
+
+library(dplyr)
+
+# Assuming `taxonomy_abundance` is your data frame
+# Identify the taxonomic and numeric columns
+
+taxonomy_columns <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus","Species")
+numeric_columns <- setdiff(names(taxonomy_abundance), taxonomy_columns)
+
+# Aggregate the data at the genus level
+
+Species_level_df <- taxonomy_abundance %>%
+  group_by(Genus) %>%
+  summarise(across(all_of(numeric_columns), sum, na.rm = TRUE), .groups = "drop") %>%
+  as.data.frame()
+
+# View the aggregated data
+
+print(Species_level_df)
+
+# Save the genus level table to a CSV file
+write.csv(Species_level_df, "Genus_level_taxonomy_abundance_data0.0.csv")
+
+
+library(labdsv)
+library(vegan)
+library(ggplot2)
+
+#loading genus file amd metadata file
+
+taxa<-read.csv("genus.csv",header = T,row.names = 1)
+meta<-read.csv("Combined_Metadata_Informal.csv", header=T,row.names=1)
+
+#indval ..18
+
+taxa.filtered.relab<-decostand(taxa, "total")*100
+indval.taxa.relab<-indval(taxa.filtered.relab, meta$Stunting_status)
+#taxa<-threshold(taxa,1)
+indval.taxa.relab<-indval(taxa.filtered.relab, meta$Stunting_status)
+summary(indval.taxa.relab)
+gr<-indval.taxa.relab$maxcls[ indval.taxa.relab$pval<0.05]
+iv<-indval.taxa.relab$indcls[ indval.taxa.relab$pval<0.05]
+pv<-indval.taxa.relab$pval[ indval.taxa.relab$pval<0.05]
+indval.taxa.relab.report<-data.frame(gr,iv,pv)
+
+# created a....
+indval.taxa.relab.report<-indval.taxa.relab.report[order(indval.taxa.relab.report$gr, -indval.taxa.relab.report$iv),]
+write.csv(indval.taxa.relab.report, "indval.Key3_taxa22.report.csv")
+
+
+library(ggplot2)
+
+# Choose species to plot
+
+species_name <- "Prevotella_9"
+
+# Prepare data
+
+myDF.plot2 <- data.frame(
+  Abundance = taxa.filtered.relab[[species_name]],
+  Stunting_status = meta$Stunting_status
+)
+
+# Ensure Stunting_status is a factor in the desired order
+
+myDF.plot2$Stunting_status <- factor(myDF.plot2$Stunting_status,
+                                     levels = c("Non-stunted", "Stunted"))
+
+
+# Wilcoxon test (two groups)
+
+wilcox_res <- wilcox.test(Abundance ~ Stunting_status, data = myDF.plot2)
+pval <- wilcox_res$p.value
+
+# Print p-value in console
+
+print(paste("Wilcoxon test p-value for", species_name, "=", signif(pval, 4)))
+
+# Format p-value for annotation
+
+pval_label <- if(pval < 0.001) "<0.001" else sprintf("%.3f", pval)
+
+# Set positions for p-value annotation
+
+y_max <- max(myDF.plot2$Abundance, na.rm = TRUE)
+y_bar <- y_max * 1.05
+y_label <- y_max * 1.1
+
+# Plot
+
+p <- ggplot(myDF.plot2, aes(x = Stunting_status, y = Abundance, fill = Stunting_status)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.8) +
+  scale_fill_manual(
+    name = "Stunting status",
+    values = c("Non-stunted" = "#B57EDC", "Stunted" = "#FFB347")
+  ) +
+  theme_bw() +
+  labs(
+    y = "Relative Abundance (%)",
+    x = NULL,
+    title = species_name
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    legend.text = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  ) +
+  # Comparison line
+  geom_segment(aes(x = 1, xend = 2, y = y_bar, yend = y_bar), linewidth = 0.4) +
+  geom_segment(aes(x = 1, xend = 1, y = y_bar, yend = y_bar - (y_max * 0.02)), linewidth = 0.4) +
+  geom_segment(aes(x = 2, xend = 2, y = y_bar, yend = y_bar - (y_max * 0.02)), linewidth = 0.4) +
+  # Add Wilcoxon p-value
+  annotate("text", x = 1.5, y = y_label, label = paste0("p = ", pval_label), size = 4, fontface = "plain")
+
+# Display plot
+
+print(p)
+
+# Save 
+
+out_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results/Indicator_Results_plots"
+
+# PDF
+pdf(file.path(out_dir, paste0(species_name, "_boxplot.pdf")), width = 8, height = 5)
+print(p)
+dev.off()
+
+# PNG
+png(file.path(out_dir, paste0(species_name, "_boxplot.png")),
+    width = 8*600, height = 5*600, res = 600)
+print(p)
+dev.off()
+
+# ================================================================
+# Additional plot: Bifidobacterium
+# Choose species to plot
+species_name <- "Bifidobacterium"
+
+# Prepare data
+
+myDF.plot2 <- data.frame(
+  Abundance = taxa.filtered.relab[[species_name]],
+  Stunting_status = meta$Stunting_status
+)
+
+# Ensure Stunting_status is a factor in the desired order
+
+myDF.plot2$Stunting_status <- factor(myDF.plot2$Stunting_status,
+                                     levels = c("Non-stunted", "Stunted"))
+
+
+# Wilcoxon test (two groups)
+
+wilcox_res <- wilcox.test(Abundance ~ Stunting_status, data = myDF.plot2)
+pval <- wilcox_res$p.value
+
+# Print p-value in console
+
+print(paste("Wilcoxon test p-value for", species_name, "=", signif(pval, 4)))
+
+# Format p-value for annotation
+
+pval_label <- if(pval < 0.001) "<0.001" else sprintf("%.3f", pval)
+
+# Set positions for p-value annotation
+
+y_max <- max(myDF.plot2$Abundance, na.rm = TRUE)
+y_bar <- y_max * 1.05
+y_label <- y_max * 1.1
+
+
+# Plot
+
+p <- ggplot(myDF.plot2, aes(x = Stunting_status, y = Abundance, fill = Stunting_status)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.8) +
+  scale_fill_manual(
+    name = "Stunting status",
+    values = c("Non-stunted" = "#B57EDC", "Stunted" = "#FFB347")
+  ) +
+  theme_bw() +
+  labs(
+    y = "Relative Abundance (%)",
+    x = NULL,
+    title = species_name
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    legend.text = element_text(face = "bold"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  ) +
+  geom_segment(aes(x = 1, xend = 2, y = y_bar, yend = y_bar), linewidth = 0.4) +
+  geom_segment(aes(x = 1, xend = 1, y = y_bar, yend = y_bar - (y_max * 0.02)), linewidth = 0.4) +
+  geom_segment(aes(x = 2, xend = 2, y = y_bar, yend = y_bar - (y_max * 0.02)), linewidth = 0.4) +
+  annotate("text", x = 1.5, y = y_label, label = paste0("p = ", pval_label), size = 4, fontface = "plain")
+
+# Display plot
+print(p)
+
+
+# Save
+
+# PDF
+pdf(file.path(out_dir, paste0(species_name, "_boxplot.pdf")), width = 8, height = 5)
+print(p)
+dev.off()
+
+# PNG
+png(file.path(out_dir, paste0(species_name, "_boxplot.png")),
+    width = 8*600, height = 5*600, res = 600)
+print(p)
+dev.off()
+
+
