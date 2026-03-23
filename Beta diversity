@@ -1,0 +1,112 @@
+# Beta Diversity (PERMANOVA Only) – Informal Dataset
+
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+
+# 1. Load rarefied phyloseq object
+
+ps <- readRDS("C:/Users/kayle/Combined_Sep_data/Kaylee results/Merged_rarefied_Informal.rds")
+
+# Extract metadata
+meta_df <- data.frame(sample_data(ps))
+meta_df$SampleID <- rownames(meta_df)
+
+cat("Sample counts per Stunting_status:\n")
+print(table(meta_df$Stunting_status))
+
+# 2. Bray–Curtis distance
+
+bray_dist <- phyloseq::distance(ps, method = "bray")
+
+# 3. PCoA
+
+pcoa_res <- cmdscale(bray_dist, eig = TRUE, k = 2)
+pcoa_df <- data.frame(pcoa_res$points)
+colnames(pcoa_df) <- c("Axis.1", "Axis.2")
+pcoa_df$SampleID <- rownames(pcoa_df)
+
+# Merge with metadata
+pcoa_df <- merge(pcoa_df, meta_df, by = "SampleID")
+
+# Variance explained
+var_explained <- round(100 * pcoa_res$eig / sum(pcoa_res$eig), 1)
+
+# 4. PERMANOVA (adonis2)
+
+set.seed(123)
+permanova_res <- adonis2(bray_dist ~ Stunting_status, data = meta_df)
+print(permanova_res)
+
+# Extract PERMANOVA p-value
+permanova_p <- permanova_res$`Pr(>F)`[1]
+permanova_label <- paste0("PERMANOVA p = ", signif(permanova_p, 3))
+
+
+# 5. Colors and shapes
+
+stunting_colors <- c("Stunted" = "#FFB347", "Non-stunted" = "#B57EDC")
+shape_values <- c("Stunted" = 24, "Non-stunted" = 21)
+
+# 6. Plot function (base)
+
+plot_pcoa_beta <- function(df, var_expl, subtitle_text = NULL) {
+  ggplot(df, aes(x = Axis.1, y = Axis.2,
+                 fill = Stunting_status, shape = Stunting_status)) +
+    geom_point(size = 3, stroke = 1, color = "black", alpha = 0.9) +
+    stat_ellipse(geom = "polygon", alpha = 0.3,
+                 aes(fill = Stunting_status, color = Stunting_status),
+                 size = 1.2) +
+    scale_fill_manual(values = stunting_colors) +
+    scale_color_manual(values = stunting_colors) +
+    scale_shape_manual(values = shape_values) +
+    theme_classic() +
+    coord_equal() +
+    labs(
+      x = paste0("PCo1 (", var_expl[1], "%)"),
+      y = paste0("PCo2 (", var_expl[2], "%)"),
+      fill = "Stunting Status",
+      color = "Stunting Status",
+      shape = "Stunting Status",
+      subtitle = subtitle_text
+    ) +
+    theme(
+      axis.title = element_text(face = "bold", size = 14),
+      axis.text = element_text(face = "bold", size = 12),
+      legend.title = element_text(face = "bold", size = 13),
+      legend.text = element_text(face = "bold", size = 11),
+      plot.subtitle = element_text(face = "italic", size = 11, color = "black", hjust = 0.5)
+    )
+}
+
+# 7. Generate plots (with and without PERMANOVA label)
+
+pcoa_plot_no_label <- plot_pcoa_beta(pcoa_df, var_explained)
+pcoa_plot_with_label <- plot_pcoa_beta(pcoa_df, var_explained, permanova_label)
+
+# 8. Save plots
+
+outdir <- "c:/Users/kayle/Combined_Sep_data/Kaylee results/Results_informal"
+if(!dir.exists(outdir)) dir.create(outdir)
+
+# Without PERMANOVA label
+pdf(file.path(outdir, "PCoA_Bray_Informal_NoLabel.pdf"), width = 7, height = 5)
+print(pcoa_plot_no_label)
+dev.off()
+
+png(file.path(outdir, "PCoA_Bray_Informal_NoLabel.png"), width = 7*600, height = 5*600, res = 600)
+print(pcoa_plot_no_label)
+dev.off()
+
+# With PERMANOVA label
+pdf(file.path(outdir, "PCoA_Bray_Informal_PERMANOVA.pdf"), width = 7, height = 5)
+print(pcoa_plot_with_label)
+dev.off()
+
+png(file.path(outdir, "PCoA_Bray_Informal_PERMANOVA.png"), width = 7*600, height = 5*600, res = 600)
+print(pcoa_plot_with_label)
+dev.off()
+
+cat("\nPlots saved successfully to:", outdir, "\n")
+cat(permanova_label, "\n")
