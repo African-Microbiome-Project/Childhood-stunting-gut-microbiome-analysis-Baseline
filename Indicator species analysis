@@ -1,3 +1,68 @@
+# ================================================================
+# 0. Load required libraries
+# ================================================================
+library(phyloseq)
+library(dplyr)
+
+# ================================================================
+# 1. Set base directory
+# ================================================================
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+
+# ================================================================
+# 2. Load rarefied phyloseq object
+# ================================================================
+ps <- readRDS(file.path(base_dir, "Merged_rarefied_Informal.rds"))
+
+# Quick check
+ps
+
+# ================================================================
+# 3. Aggregate at Genus level
+# ================================================================
+ps_genus <- tax_glom(ps, taxrank = "Genus")
+
+# ================================================================
+# 4. Convert to relative abundance (%)
+# ================================================================
+ps_genus_relab <- transform_sample_counts(ps_genus, function(x) (x / sum(x)) * 100)
+
+# ================================================================
+# 5. Extract OTU table
+# ================================================================
+genus_table <- as.data.frame(otu_table(ps_genus_relab))
+
+# Ensure samples are rows
+if (taxa_are_rows(ps_genus_relab)) {
+  genus_table <- t(genus_table)
+}
+
+# ================================================================
+# 6. Assign genus names as column names
+# ================================================================
+tax_table_df <- as.data.frame(tax_table(ps_genus_relab))
+
+genus_names <- tax_table_df$Genus
+
+# Replace NA genus names
+genus_names[is.na(genus_names)] <- "Unclassified"
+
+# Assign names
+colnames(genus_table) <- genus_names
+
+# ================================================================
+# 7. Handle duplicate genus names
+# ================================================================
+colnames(genus_table) <- make.unique(colnames(genus_table))
+
+# ================================================================
+# 8. Save genus.csv
+# ================================================================
+write.csv(genus_table,
+          file.path(base_dir, "genus.csv"))
+
+cat("genus.csv successfully created and saved.\n")
+
 # Load the necessary libraries
 library(phyloseq)
 library(dplyr)
