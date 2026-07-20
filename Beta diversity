@@ -1,55 +1,91 @@
-# Beta Diversity (PERMANOVA Only) – Informal Dataset
-
 library(phyloseq)
 library(vegan)
 library(ggplot2)
 library(dplyr)
 
-# 1. Load rarefied phyloseq object
 
-ps <- readRDS("C:/Users/kayle/Combined_Sep_data/Kaylee results/Merged_rarefied_Informal.rds")
+# 1. Load rarefied phyloseq object + align metadata
 
-# Extract metadata
+base_dir <- "C:/Users/kayle/Combined_Sep_data/Kaylee results"
+ps <- readRDS(file.path(base_dir, "Merged_rarefied_Informal.rds"))
+
+metadata_informal <- read.csv(file.path(base_dir, "Combined_Metadata_Informal.csv"),
+                              stringsAsFactors = FALSE, row.names = 1)
+metadata_informal <- metadata_informal[sample_names(ps), ]
+sample_data(ps) <- sample_data(metadata_informal)
+
 meta_df <- data.frame(sample_data(ps))
 meta_df$SampleID <- rownames(meta_df)
 
-cat("Sample counts per Stunting_status:\n")
+cat("\nRaw sample count:", nrow(meta_df), "\n")
+cat("Stunting_status counts (before filtering NAs):\n")
+print(table(meta_df$Stunting_status, useNA = "ifany"))
+
+
+# 2. Keep only samples with valid Stunting_status, Age, AND Gender
+
+meta_df <- meta_df %>%
+  filter(Stunting_status %in% c("Stunted", "Non-stunted"), !is.na(Stunting_status),
+         !is.na(Age),
+         !is.na(Gender), Gender %in% c("Male", "Female"))
+
+meta_df$Stunting_status <- factor(meta_df$Stunting_status, levels = c("Non-stunted", "Stunted"))
+meta_df$Gender           <- factor(meta_df$Gender, levels = c("Female", "Male"))
+
+cat("\nSamples retained after filtering (Stunting_status + Age + Gender all present):",
+    nrow(meta_df), "\n")
 print(table(meta_df$Stunting_status))
+cat("Gender breakdown:\n")
+print(table(meta_df$Gender))
 
-# 2. Bray–Curtis distance
+ps_sub <- prune_samples(meta_df$SampleID, ps)
+sample_data(ps_sub) <- sample_data(meta_df)
 
-bray_dist <- phyloseq::distance(ps, method = "bray")
+cat("\nSamples in filtered phyloseq object:", nsamples(ps_sub), "\n")
 
-# 3. PCoA
+
+# 3. Bray-Curtis distance (on the FILTERED object)
+
+bray_dist <- phyloseq::distance(ps_sub, method = "bray")
+
+
+# 4. PCoA
 
 pcoa_res <- cmdscale(bray_dist, eig = TRUE, k = 2)
 pcoa_df <- data.frame(pcoa_res$points)
 colnames(pcoa_df) <- c("Axis.1", "Axis.2")
 pcoa_df$SampleID <- rownames(pcoa_df)
 
-# Merge with metadata
 pcoa_df <- merge(pcoa_df, meta_df, by = "SampleID")
 
-# Variance explained
 var_explained <- round(100 * pcoa_res$eig / sum(pcoa_res$eig), 1)
 
-# 4. PERMANOVA (adonis2)
+
+# 5. PERMANOVA (adonis2), adjusted for Age and Gender
+#    Age and Gender entered first as covariates; Stunting_status
+#    entered last so its R2/p-value is the effect AFTER adjustment.
 
 set.seed(123)
-permanova_res <- adonis2(bray_dist ~ Stunting_status, data = meta_df)
+permanova_res <- adonis2(bray_dist ~ Age + Gender + Stunting_status,
+                         data = meta_df, by = "terms")
 print(permanova_res)
 
-# Extract PERMANOVA p-value
-permanova_p <- permanova_res$`Pr(>F)`[1]
+# Extract PERMANOVA p-value and R2 specifically for Stunting_status
+stunting_row   <- which(rownames(permanova_res) == "Stunting_status")
+permanova_p    <- permanova_res$`Pr(>F)`[stunting_row]
+permanova_r2   <- permanova_res$R2[stunting_row]
 permanova_label <- paste0("PERMANOVA p = ", signif(permanova_p, 3))
 
+cat("\n", permanova_label, "\n")
 
-# 5. Colors and shapes
+
+# 6. Colors and shapes
 
 stunting_colors <- c("Stunted" = "#FFB347", "Non-stunted" = "#B57EDC")
 shape_values <- c("Stunted" = 24, "Non-stunted" = 21)
 
-# 6. Plot function (base)
+
+# 7. Plot function (base)
 
 plot_pcoa_beta <- function(df, var_expl, subtitle_text = NULL) {
   ggplot(df, aes(x = Axis.1, y = Axis.2,
@@ -80,33 +116,40 @@ plot_pcoa_beta <- function(df, var_expl, subtitle_text = NULL) {
     )
 }
 
-# 7. Generate plots (with and without PERMANOVA label)
+
+# 8. Generate plots (with and without PERMANOVA label)
 
 pcoa_plot_no_label <- plot_pcoa_beta(pcoa_df, var_explained)
 pcoa_plot_with_label <- plot_pcoa_beta(pcoa_df, var_explained, permanova_label)
 
-# 8. Save plots
 
-outdir <- "c:/Users/kayle/Combined_Sep_data/Kaylee results/Results_informal"
-if(!dir.exists(outdir)) dir.create(outdir)
+# 9. Save plots + PERMANOVA table
+
+outdir <- file.path(base_dir, "Results_informal")
+if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+
+write.csv(as.data.frame(permanova_res),
+          file.path(outdir, "PERMANOVA_Bray_Informal_AgeGenderAdjusted_table.csv"))
 
 # Without PERMANOVA label
-pdf(file.path(outdir, "PCoA_Bray_Informal_NoLabel.pdf"), width = 7, height = 5)
+pdf(file.path(outdir, "PCoA_Bray_Informal_AgeGenderAdjusted_NoLabel.pdf"), width = 7, height = 5)
 print(pcoa_plot_no_label)
 dev.off()
 
-png(file.path(outdir, "PCoA_Bray_Informal_NoLabel.png"), width = 7*600, height = 5*600, res = 600)
+png(file.path(outdir, "PCoA_Bray_Informal_AgeGenderAdjusted_NoLabel.png"),
+    width = 7*600, height = 5*600, res = 600)
 print(pcoa_plot_no_label)
 dev.off()
 
 # With PERMANOVA label
-pdf(file.path(outdir, "PCoA_Bray_Informal_PERMANOVA.pdf"), width = 7, height = 5)
+pdf(file.path(outdir, "PCoA_Bray_Informal_AgeGenderAdjusted_PERMANOVA.pdf"), width = 7, height = 5)
 print(pcoa_plot_with_label)
 dev.off()
 
-png(file.path(outdir, "PCoA_Bray_Informal_PERMANOVA.png"), width = 7*600, height = 5*600, res = 600)
+png(file.path(outdir, "PCoA_Bray_Informal_AgeGenderAdjusted_PERMANOVA.png"),
+    width = 7*600, height = 5*600, res = 600)
 print(pcoa_plot_with_label)
 dev.off()
 
-cat("\nPlots saved successfully to:", outdir, "\n")
+cat("\nPlots and PERMANOVA table saved successfully to:", outdir, "\n")
 cat(permanova_label, "\n")
